@@ -221,4 +221,86 @@ public final class Database implements AutoCloseable {
     private void bindAndCapture(PreparedStatement ps, Sql.Binder binder, List<Object> captured) throws SQLException {
         binder.bind(new CapturingPreparedStatement(ps, captured));
     }
+
+    /** Default batch chunk size — keeps SQL shapes stable and stays under driver limits. */
+    private static final int BATCH_CHUNK = 100;
+
+    /**
+     * Batched INSERT/UPDATE over {@code items}, chunked at {@value #BATCH_CHUNK}.
+     * Returns per-item affected-row counts (in iteration order). All chunks run in
+     * ONE transaction (autocommit off, single commit) so a failure in a later chunk
+     * cannot leave earlier chunks committed — the whole batch is all-or-nothing.
+     */
+    public <T> int[] batch(String sql, Iterable<T> items, Sql.BiBinder<T> binder) {
+        List<T> all = new ArrayList<>();
+        for (T it : items) all.add(it);
+        if (all.isEmpty()) return new int[0];
+        int[] result = new int[all.size()];
+        int written = 0;
+        Connection c = null;
+        boolean prevAutoCommit = true;
+        try {
+            c = ds.getConnection();
+            prevAutoCommit = c.getAutoCommit();
+            c.setAutoCommit(false);
+            for (int start = 0; start < all.size(); start += BATCH_CHUNK) {
+                int end = Math.min(start + BATCH_CHUNK, all.size());
+                try (PreparedStatement ps = c.prepareStatement(sql)) {
+                    for (int i = start; i < end; i++) {
+                        binder.bind(ps, all.get(i));
+                        ps.addBatch();
+                    }
+                    int[] counts = ps.executeBatch();
+                    System.arraycopy(counts, 0, result, written, counts.length);
+                    written += counts.length;
+                }
+            }
+            c.commit();
+            return result;
+        } catch (SQLException e) {
+            if (c != null) { try { c.rollback(); } catch (SQLException ignored) { } }
+            throw DataAccessException.wrap(sql, null, debugParams, e);
+        } finally {
+            if (c != null) {
+                try { c.setAutoCommit(prevAutoCommit); } catch (SQLException ignored) { }
+                try { c.close(); } catch (SQLException ignored) { }
+            }
+        }
+    }
+
+    /**
+     * Run {@code body} inside a transaction: autocommit off, commit on success,
+     * rollback + rethrow on ANY failure, autocommit restored and connection closed
+     * in finally. The body gets the live connection and must use it directly (plain
+     * JDBC) for multi-statement atomic units.
+     *
+     * <p><b>Important:</b> the other helpers ({@code query}/{@code update}/...) open
+     * their OWN connection and do NOT join this transaction — inside a {@code tx}
+     * body always use the passed {@code Connection c}, never {@code this.update(...)}.
+     */
+    public <T> T tx(Sql.TxBody<T> body) {
+        Connection c = null;
+        boolean prevAutoCommit = true;
+        try {
+            c = ds.getConnection();
+            prevAutoCommit = c.getAutoCommit();
+            c.setAutoCommit(false);
+            T result = body.run(c);
+            c.commit();
+            return result;
+        } catch (Exception e) {
+            // Catch ANY throwable from the body — our own query helpers throw the
+            // unchecked DataAccessException, so a SQLException-only catch would skip
+            // rollback and leak an open transaction back to the pool.
+            if (c != null) { try { c.rollback(); } catch (SQLException ignored) { } }
+            if (e instanceof DataAccessException dae) throw dae;
+            if (e instanceof SQLException sqe) throw DataAccessException.wrap("<transaction>", null, debugParams, sqe);
+            throw DataAccessException.fromBody("Transaction body failed", e);
+        } finally {
+            if (c != null) {
+                try { c.setAutoCommit(prevAutoCommit); } catch (SQLException ignored) { }
+                try { c.close(); } catch (SQLException ignored) { }
+            }
+        }
+    }
 }
