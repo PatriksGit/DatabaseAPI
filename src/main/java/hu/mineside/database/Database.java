@@ -7,7 +7,12 @@ import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
@@ -161,5 +166,59 @@ public final class Database implements AutoCloseable {
     private static void requireColumnExpr(String v, String what) {
         if (v == null || !SAFE_COLUMN_EXPR.matcher(v).matches())
             throw new IllegalArgumentException("Unsafe " + what + " expression: " + v);
+    }
+
+    // ---- Query helpers (synchronous; run on the caller's thread) ----
+
+    /** Run a SELECT, mapping every row. */
+    public <T> List<T> query(String sql, Sql.Binder binder, Sql.RowMapper<T> mapper) {
+        List<Object> captured = new ArrayList<>();
+        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            bindAndCapture(ps, binder, captured);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<T> out = new ArrayList<>();
+                while (rs.next()) out.add(mapper.map(rs));
+                return out;
+            }
+        } catch (SQLException e) {
+            throw DataAccessException.wrap(sql, captured, debugParams, e);
+        }
+    }
+
+    /** Run a SELECT, returning the first row if any. */
+    public <T> Optional<T> queryFirst(String sql, Sql.Binder binder, Sql.RowMapper<T> mapper) {
+        List<Object> captured = new ArrayList<>();
+        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            bindAndCapture(ps, binder, captured);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(mapper.map(rs)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw DataAccessException.wrap(sql, captured, debugParams, e);
+        }
+    }
+
+    /** Run an INSERT/UPDATE/DELETE; returns affected rows. */
+    public int update(String sql, Sql.Binder binder) {
+        List<Object> captured = new ArrayList<>();
+        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            bindAndCapture(ps, binder, captured);
+            return ps.executeUpdate();
+        } catch (SQLException e) {
+            throw DataAccessException.wrap(sql, captured, debugParams, e);
+        }
+    }
+
+    // Param-less convenience overloads.
+    public <T> List<T> query(String sql, Sql.RowMapper<T> mapper) { return query(sql, Sql.Binder.NONE, mapper); }
+    public int update(String sql) { return update(sql, Sql.Binder.NONE); }
+
+    /**
+     * Bind params through a capturing proxy so a failure can report the actual
+     * values/types. We wrap the real PreparedStatement only for the set* calls
+     * the binder makes; this records (index,value) without changing behavior.
+     */
+    private void bindAndCapture(PreparedStatement ps, Sql.Binder binder, List<Object> captured) throws SQLException {
+        binder.bind(new CapturingPreparedStatement(ps, captured));
     }
 }
