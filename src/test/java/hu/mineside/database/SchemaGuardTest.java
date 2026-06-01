@@ -1,7 +1,29 @@
 package hu.mineside.database;
 
-// PLACEHOLDER — implement in Task 6 of the plan.
-// MineActivity/docs/superpowers/plans/2026-06-01-databaseapi.md
-// Unit tests: ensureColumn / ensureIndex reject unsafe table / column-expression
-// identifiers (guard throws before any connection is touched, so Connection=null is fine).
-// No code yet — scaffold only.
+import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
+import hu.mineside.database.DatabaseConfig.SslMode;
+import static org.junit.jupiter.api.Assertions.*;
+
+class SchemaGuardTest {
+
+    private Database db() {
+        return new Database(
+            DatabaseConfig.of("localhost", 3306, "db", "u", "p", 1, SslMode.DISABLED, false),
+            LoggerFactory.getLogger("t"));
+    }
+
+    @Test void ensureColumnRejectsUnsafeTable() {
+        try (Database d = db()) {
+            assertThrows(IllegalArgumentException.class,
+                () -> d.ensureColumn(null, "players; DROP TABLE x", "c", "INT"));
+        }
+    }
+
+    @Test void ensureIndexRejectsUnsafeColumns() {
+        try (Database d = db()) {
+            assertThrows(IllegalArgumentException.class,
+                () -> d.ensureIndex(null, "players", "idx", "(c); DROP TABLE x"));
+        }
+    }
+}

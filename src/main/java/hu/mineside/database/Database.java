@@ -111,5 +111,55 @@ public final class Database implements AutoCloseable {
         if (ds instanceof AutoCloseable a) { try { a.close(); } catch (Exception ignored) { } }
     }
 
-    // --- schema + query helpers added in Tasks 6 and 7 ---
+    /**
+     * Add the column if missing. Swallows MySQL duplicate-column error (1060) so
+     * re-running on an already-migrated table is a no-op. Identifiers validated
+     * against a strict whitelist (DDL identifiers cannot be bound as parameters).
+     */
+    public void ensureColumn(Connection c, String table, String column, String definition) throws SQLException {
+        requireIdent(table, "table");
+        requireIdent(column, "column");
+        requireColumnExpr(definition, "definition");
+        try (var st = c.createStatement()) {
+            st.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
+        } catch (SQLException e) {
+            if (e.getErrorCode() == 1060) return; // duplicate column — fine
+            throw e;
+        }
+    }
+
+    /** Convert a column to the given type (idempotent; MODIFY on a matching type is a no-op). */
+    public void ensureColumnType(Connection c, String table, String column, String typeDefinition) throws SQLException {
+        requireIdent(table, "table");
+        requireIdent(column, "column");
+        requireColumnExpr(typeDefinition, "type");
+        try (var st = c.createStatement()) {
+            st.execute("ALTER TABLE " + table + " MODIFY COLUMN " + column + " " + typeDefinition);
+        } catch (SQLException e) {
+            if (e.getErrorCode() == 1146) return; // table doesn't exist — defensive no-op
+            throw e;
+        }
+    }
+
+    /** Create the named index if absent. Swallows duplicate-key-name error (1061). */
+    public void ensureIndex(Connection c, String table, String indexName, String columns) throws SQLException {
+        requireIdent(table, "table");
+        requireIdent(indexName, "index");
+        requireColumnExpr(columns, "columns");
+        try (var st = c.createStatement()) {
+            st.execute("CREATE INDEX " + indexName + " ON " + table + " " + columns);
+        } catch (SQLException e) {
+            if (e.getErrorCode() == 1061) return; // already exists — fine
+            throw e;
+        }
+    }
+
+    private static void requireIdent(String v, String what) {
+        if (v == null || !SAFE_IDENT.matcher(v).matches())
+            throw new IllegalArgumentException("Unsafe " + what + " identifier: " + v);
+    }
+    private static void requireColumnExpr(String v, String what) {
+        if (v == null || !SAFE_COLUMN_EXPR.matcher(v).matches())
+            throw new IllegalArgumentException("Unsafe " + what + " expression: " + v);
+    }
 }
