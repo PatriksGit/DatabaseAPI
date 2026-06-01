@@ -1,7 +1,70 @@
 package hu.mineside.database;
 
-// PLACEHOLDER — implement in Task 2 of the plan.
-// MineActivity/docs/superpowers/plans/2026-06-01-databaseapi.md
-// Immutable config record (host/port/database/username/password/poolSize/
-// timeouts/sslMode/debugParams) + nested SslMode enum with fail-closed parse()
-// + of(...) convenience factory. No code yet — scaffold only.
+import java.util.Locale;
+
+/**
+ * Immutable JDBC/pool configuration. Build via the canonical constructor or the
+ * {@link #of} convenience (clamps poolSize, leaves timeouts at 0 = Hikari default).
+ *
+ * <p>{@code debugParams}: when true, {@link DataAccessException} messages include
+ * actual bound parameter VALUES (handy for debugging, but may log secrets such as
+ * password hashes / emails / IPs). Default false → only param types are logged.
+ */
+public record DatabaseConfig(
+    String host, int port, String database,
+    String username, String password,
+    int poolSize,
+    long connectionTimeoutMs, long idleTimeoutMs, long maxLifetimeMs,
+    SslMode sslMode,
+    boolean debugParams
+) {
+    /** Convenience: timeouts default to 0 (use Hikari defaults), poolSize clamped >= 1. */
+    public static DatabaseConfig of(String host, int port, String database,
+                                    String username, String password,
+                                    int poolSize, SslMode sslMode, boolean debugParams) {
+        return new DatabaseConfig(host, port, database, username, password,
+            Math.max(1, poolSize), 0L, 0L, 0L, sslMode, debugParams);
+    }
+
+    public DatabaseConfig {
+        poolSize = Math.max(1, poolSize);
+    }
+
+    /**
+     * TLS posture for the JDBC connection. Maps directly to Connector/J's
+     * {@code sslMode} URL parameter.
+     */
+    public enum SslMode {
+        /** No TLS. Acceptable for localhost-only deployments. */
+        DISABLED,
+        /** TLS encrypted, server certificate NOT verified. Vulnerable to MITM. */
+        REQUIRED,
+        /** TLS encrypted, CA chain verified. Recommended for remote DBs. */
+        VERIFY_CA,
+        /** TLS encrypted, CA chain + hostname verified. Strongest. */
+        VERIFY_IDENTITY;
+
+        /**
+         * Parse a config string. Case-insensitive; '-' normalized to '_'; accepts
+         * the legacy boolean {@code ssl: true/false} mapping. Fails closed: any
+         * unrecognized input throws rather than silently downgrading TLS.
+         *
+         * @throws IllegalArgumentException if {@code raw} is null, blank, or unknown.
+         */
+        public static SslMode parse(String raw) {
+            if (raw == null || raw.isBlank()) {
+                throw new IllegalArgumentException("ssl-mode is blank or missing");
+            }
+            String t = raw.trim().toUpperCase(Locale.ROOT).replace('-', '_');
+            return switch (t) {
+                case "DISABLED", "FALSE", "NO", "OFF" -> DISABLED;
+                case "REQUIRED" -> REQUIRED;
+                case "VERIFY_CA", "TRUE", "YES", "ON" -> VERIFY_CA;
+                case "VERIFY_IDENTITY" -> VERIFY_IDENTITY;
+                default -> throw new IllegalArgumentException(
+                    "Unknown ssl-mode '" + raw + "'. Valid: DISABLED, REQUIRED, VERIFY_CA, "
+                    + "VERIFY_IDENTITY (or legacy boolean: true/false/yes/no/on/off).");
+            };
+        }
+    }
+}
