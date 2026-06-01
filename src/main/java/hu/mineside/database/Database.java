@@ -99,12 +99,30 @@ public final class Database implements AutoCloseable {
         // a Database without a live DB.
         hc.setInitializationFailTimeout(-1);
         // MySQL drops idle connections after wait_timeout; keepalive avoids handing
-        // out dead ones after a quiet period.
+        // out dead ones after a quiet period. No connectionTestQuery: let Hikari use
+        // the JDBC4 Connection.isValid() path (Connector/J 8.3 supports it).
         hc.setKeepaliveTime(60_000);
-        hc.setConnectionTestQuery("SELECT 1");
+        // Warn (stack trace) if a connection is held > 60s — diagnostic only, no eviction.
+        hc.setLeakDetectionThreshold(60_000);
         hc.addDataSourceProperty("cachePrepStmts", "true");
         hc.addDataSourceProperty("prepStmtCacheSize", "250");
         hc.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
+        // Pin Connector/J blast-radius flags OFF. Safe on 8.3 defaults today, but this lib
+        // is shaded into every plugin — explicit pins are immune to a future driver-default flip.
+        hc.addDataSourceProperty("autoDeserialize", "false");        // Java-object deser RCE via BLOB
+        hc.addDataSourceProperty("allowLoadLocalInfile", "false");   // LOCAL INFILE file-read by a rogue server
+        hc.addDataSourceProperty("allowUrlInLocalInfile", "false");
+        hc.addDataSourceProperty("allowMultiQueries", "false");      // stacked-query amplification
+        // Optional custom truststore so VERIFY_CA / VERIFY_IDENTITY can validate a private CA.
+        // Set as dataSource properties (NOT in the URL string) so the path/password never enter
+        // the concatenated JDBC URL.
+        if (cfg.trustStoreUrl() != null && !cfg.trustStoreUrl().isBlank()) {
+            hc.addDataSourceProperty("trustCertificateKeyStoreUrl", cfg.trustStoreUrl());
+            if (cfg.trustStorePassword() != null)
+                hc.addDataSourceProperty("trustCertificateKeyStorePassword", cfg.trustStorePassword());
+            if (cfg.trustStoreType() != null && !cfg.trustStoreType().isBlank())
+                hc.addDataSourceProperty("trustCertificateKeyStoreType", cfg.trustStoreType());
+        }
         this.ds = new HikariDataSource(hc);
     }
 
@@ -129,7 +147,12 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Add the column if missing. Swallows MySQL duplicate-column error (1060) so
+     * <p><b>Trust contract:</b> {@code table}/{@code column}/{@code definition}/{@code columns}
+     * must be DEVELOPER-controlled literals, never end-user or config-derived input. They are
+     * concatenated into DDL (identifiers cannot be JDBC-bound). The whitelist guards block
+     * injection, but treat these arguments as code, not data.
+     *
+     * <p>Add the column if missing. Swallows MySQL duplicate-column error (1060) so
      * re-running on an already-migrated table is a no-op. Identifiers validated
      * against a strict whitelist (DDL identifiers cannot be bound as parameters).
      */
@@ -145,7 +168,11 @@ public final class Database implements AutoCloseable {
         }
     }
 
-    /** Convert a column to the given type (idempotent; MODIFY on a matching type is a no-op). */
+    /**
+     * <b>Trust contract:</b> arguments must be DEVELOPER-controlled literals, never user/config
+     * input — they are concatenated into DDL. Convert a column to the given type (idempotent;
+     * MODIFY on a matching type is a no-op).
+     */
     public void ensureColumnType(Connection c, String table, String column, String typeDefinition) throws SQLException {
         requireIdent(table, "table");
         requireIdent(column, "column");
@@ -158,7 +185,11 @@ public final class Database implements AutoCloseable {
         }
     }
 
-    /** Create the named index if absent. Swallows duplicate-key-name error (1061). */
+    /**
+     * <b>Trust contract:</b> arguments must be DEVELOPER-controlled literals, never user/config
+     * input — they are concatenated into DDL. Create the named index if absent. Swallows
+     * duplicate-key-name error (1061).
+     */
     public void ensureIndex(Connection c, String table, String indexName, String columns) throws SQLException {
         requireIdent(table, "table");
         requireIdent(indexName, "index");
