@@ -10,8 +10,16 @@ import java.util.StringJoiner;
  * what failed and which query caused it. Parameter VALUES appear only when the
  * config has {@code debugParams=true} (otherwise just their types, to avoid
  * leaking secrets like password hashes / emails / IPs).
+ *
+ * <p>To keep the message a single, safe log line, the SQL and any debug values are
+ * control-stripped (newlines/tabs/control chars → spaces) and debug values are
+ * length-capped — this prevents log-injection via attacker-controlled parameters
+ * and avoids dumping huge blobs.
  */
 public final class DataAccessException extends RuntimeException {
+
+    /** Max rendered length of a single bound value in debug mode. */
+    private static final int MAX_DEBUG_VALUE_LEN = 64;
 
     private DataAccessException(String message, Throwable cause) {
         super(message, cause);
@@ -23,7 +31,7 @@ public final class DataAccessException extends RuntimeException {
     }
 
     static DataAccessException wrap(String sql, List<?> params, boolean debugParams, SQLException cause) {
-        StringBuilder sb = new StringBuilder("SQL failed: ").append(sql);
+        StringBuilder sb = new StringBuilder("SQL failed: ").append(stripControl(sql));
         if (params != null && !params.isEmpty()) {
             StringJoiner j = new StringJoiner(", ", " params=[", "]");
             for (Object p : params) j.add(describe(p, debugParams));
@@ -40,9 +48,21 @@ public final class DataAccessException extends RuntimeException {
 
     private static String describe(Object p, boolean debugParams) {
         if (p == null) return "null";
-        if (debugParams) return String.valueOf(p);
+        if (debugParams) return truncate(stripControl(String.valueOf(p)));
         // byte[] (UUID/BINARY) prints as e.g. byte[16]; everything else by simple type name
         if (p instanceof byte[] b) return "byte[" + b.length + "]";
         return p.getClass().getSimpleName();
+    }
+
+    /** Replace control characters (incl. newline/tab and DEL) with spaces so the message is one line. */
+    private static String stripControl(String s) {
+        if (s == null) return null;
+        return s.replaceAll("[\\u0000-\\u001F\\u007F]", " ");
+    }
+
+    /** Cap a rendered value; if over the limit, keep the head and append the original length. */
+    private static String truncate(String s) {
+        if (s.length() <= MAX_DEBUG_VALUE_LEN) return s;
+        return s.substring(0, MAX_DEBUG_VALUE_LEN) + "…(" + s.length() + ")";
     }
 }

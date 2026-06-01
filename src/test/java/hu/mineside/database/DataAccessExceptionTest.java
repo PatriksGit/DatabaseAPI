@@ -40,4 +40,27 @@ class DataAccessExceptionTest {
         DataAccessException e = DataAccessException.wrap(SQL, params, false, cause);
         assertTrue(e.getMessage().contains("null"));
     }
+
+    @Test void debugValueTruncatedAndLengthMarked() {
+        String big = "x".repeat(200);
+        DataAccessException e = DataAccessException.wrap(SQL, java.util.List.of(big), true, cause);
+        assertFalse(e.getMessage().contains(big), "full long value must not appear");
+        assertTrue(e.getMessage().contains("(200)"), "original length marker present");
+    }
+
+    @Test void debugValueControlCharsStripped() {
+        DataAccessException e = DataAccessException.wrap(SQL, java.util.List.of("a\nb\tc"), true, cause);
+        String m = e.getMessage();
+        assertFalse(m.contains("\n"), "newline stripped from value");
+        assertFalse(m.contains("\t"), "tab stripped from value");
+    }
+
+    @Test void sqlControlCharsStripped() {
+        String multi = "SELECT *\nFROM players\tWHERE x=?";
+        DataAccessException e = DataAccessException.wrap(multi, null, false, cause);
+        String m = e.getMessage();
+        assertFalse(m.contains("\n"), "newline stripped from SQL");
+        assertFalse(m.contains("\t"), "tab stripped from SQL");
+        assertTrue(m.contains("SELECT *"), "SQL still readable");
+    }
 }
