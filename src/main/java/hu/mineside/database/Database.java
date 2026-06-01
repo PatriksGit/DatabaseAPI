@@ -270,9 +270,16 @@ public final class Database implements AutoCloseable {
             }
             c.commit();
             return result;
-        } catch (SQLException e) {
+        } catch (Exception e) {
+            // Catch ANY throwable from the binder — a BiBinder can throw unchecked
+            // (NPE, IllegalArgumentException, ...). A SQLException-only catch would
+            // skip rollback, and finally's setAutoCommit(true) would then COMMIT the
+            // already-executed chunks (JDBC semantics) — silent partial commit,
+            // breaking the all-or-nothing guarantee above.
             if (c != null) { try { c.rollback(); } catch (SQLException ignored) { } }
-            throw DataAccessException.wrap(sql, null, debugParams, e);
+            if (e instanceof DataAccessException dae) throw dae;
+            if (e instanceof SQLException sqe) throw DataAccessException.wrap(sql, null, debugParams, sqe);
+            throw DataAccessException.fromBody("Batch failed: " + sql, e);
         } finally {
             if (c != null) {
                 try { c.setAutoCommit(prevAutoCommit); } catch (SQLException ignored) { }
