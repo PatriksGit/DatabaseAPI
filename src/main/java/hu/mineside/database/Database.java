@@ -282,10 +282,8 @@ public final class Database implements AutoCloseable {
         int[] result = new int[all.size()];
         int written = 0;
         Connection c = null;
-        boolean prevAutoCommit = true;
         try {
             c = ds.getConnection();
-            prevAutoCommit = c.getAutoCommit();
             c.setAutoCommit(false);
             for (int start = 0; start < all.size(); start += BATCH_CHUNK) {
                 int end = Math.min(start + BATCH_CHUNK, all.size());
@@ -303,27 +301,28 @@ public final class Database implements AutoCloseable {
             return result;
         } catch (Exception e) {
             // Catch ANY throwable from the binder — a BiBinder can throw unchecked
-            // (NPE, IllegalArgumentException, ...). A SQLException-only catch would
-            // skip rollback, and finally's setAutoCommit(true) would then COMMIT the
-            // already-executed chunks (JDBC semantics) — silent partial commit,
-            // breaking the all-or-nothing guarantee above.
-            if (c != null) { try { c.rollback(); } catch (SQLException ignored) { } }
+            // (NPE, IllegalArgumentException, ...). If rollback itself fails, the
+            // connection's tx state is unknown: EVICT it so a broken/open-tx connection
+            // is never returned to the shared pool.
+            if (c != null) {
+                try { c.rollback(); }
+                catch (SQLException re) { evict(c); c = null; }
+            }
             if (e instanceof DataAccessException dae) throw dae;
             if (e instanceof SQLException sqe) throw DataAccessException.wrap(sql, null, debugParams, sqe);
             throw DataAccessException.fromBody("Batch failed: " + sql, e);
         } finally {
-            if (c != null) {
-                try { c.setAutoCommit(prevAutoCommit); } catch (SQLException ignored) { }
-                try { c.close(); } catch (SQLException ignored) { }
-            }
+            // HikariCP resets autoCommit to the pool default on return, so no manual restore.
+            if (c != null) { try { c.close(); } catch (SQLException ignored) { } }
         }
     }
 
     /**
      * Run {@code body} inside a transaction: autocommit off, commit on success,
-     * rollback + rethrow on ANY failure, autocommit restored and connection closed
-     * in finally. The body gets the live connection and must use it directly (plain
-     * JDBC) for multi-statement atomic units.
+     * rollback + rethrow on ANY failure, connection closed in finally. If rollback
+     * itself fails, the connection is EVICTED rather than returned to the pool. The
+     * body gets the live connection and must use it directly (plain JDBC) for
+     * multi-statement atomic units.
      *
      * <p><b>Important:</b> the other helpers ({@code query}/{@code update}/...) open
      * their OWN connection and do NOT join this transaction — inside a {@code tx}
@@ -331,27 +330,35 @@ public final class Database implements AutoCloseable {
      */
     public <T> T tx(Sql.TxBody<T> body) {
         Connection c = null;
-        boolean prevAutoCommit = true;
         try {
             c = ds.getConnection();
-            prevAutoCommit = c.getAutoCommit();
             c.setAutoCommit(false);
             T result = body.run(c);
             c.commit();
             return result;
         } catch (Exception e) {
-            // Catch ANY throwable from the body — our own query helpers throw the
-            // unchecked DataAccessException, so a SQLException-only catch would skip
-            // rollback and leak an open transaction back to the pool.
-            if (c != null) { try { c.rollback(); } catch (SQLException ignored) { } }
+            // Catch ANY throwable from the body (our query helpers throw unchecked
+            // DataAccessException). If rollback itself fails, EVICT the connection so a
+            // broken/open-tx connection is never handed to the next plugin via the pool.
+            if (c != null) {
+                try { c.rollback(); }
+                catch (SQLException re) { evict(c); c = null; }
+            }
             if (e instanceof DataAccessException dae) throw dae;
             if (e instanceof SQLException sqe) throw DataAccessException.wrap("<transaction>", null, debugParams, sqe);
             throw DataAccessException.fromBody("Transaction body failed", e);
         } finally {
-            if (c != null) {
-                try { c.setAutoCommit(prevAutoCommit); } catch (SQLException ignored) { }
-                try { c.close(); } catch (SQLException ignored) { }
-            }
+            // HikariCP resets autoCommit to the pool default on return, so no manual restore.
+            if (c != null) { try { c.close(); } catch (SQLException ignored) { } }
+        }
+    }
+
+    /** Discard a connection whose transaction state is unknown so it never returns to the pool. */
+    private void evict(Connection c) {
+        if (ds instanceof com.zaxxer.hikari.HikariDataSource h) {
+            try { h.evictConnection(c); } catch (Exception ignored) { }
+        } else {
+            try { c.close(); } catch (Exception ignored) { } // non-Hikari test seam
         }
     }
 }
