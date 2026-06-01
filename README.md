@@ -53,5 +53,24 @@ db.close(); // shutdown
 ```
 
 Errors throw an unchecked `DataAccessException` whose message embeds the SQL (and
-param types; values only when `debugParams=true`), with the original `SQLException`
-as cause. Catch it once at your async boundary.
+param types; values only when `debugParams=true` — control-stripped and length-capped),
+with the original `SQLException` as cause. Catch it once at your async boundary.
+
+## TLS against a private CA
+
+`VERIFY_CA` / `VERIFY_IDENTITY` validate the server certificate against the JVM default
+trust store. For a self-hosted MySQL with a private CA, supply a truststore:
+
+```java
+DatabaseConfig cfg = DatabaseConfig.of(host, 3306, db, user, pass, 8,
+        DatabaseConfig.SslMode.VERIFY_IDENTITY, false)
+    .withTrustStore("file:/etc/mysql/truststore.jks", trustStorePassword, "JKS");
+```
+
+The truststore path and password are passed as driver dataSource properties (never in the
+JDBC URL string). The library also pins `autoDeserialize`, `allowLoadLocalInfile`,
+`allowUrlInLocalInfile`, and `allowMultiQueries` to `false`.
+
+> **Logging:** do not enable `com.zaxxer.hikari` DEBUG logging in production — HikariCP may
+> print pool configuration. The library never logs the password itself, and
+> `DatabaseConfig.toString()` redacts it.
