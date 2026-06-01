@@ -108,6 +108,18 @@ public final class Database implements AutoCloseable {
         this.ds = new HikariDataSource(hc);
     }
 
+    // Package-private seam for integration tests: drive the helpers against an
+    // arbitrary DataSource (e.g. H2) without MySQL pool construction/validation.
+    private Database(DataSource ds, boolean debugParams, Logger log) {
+        this.ds = ds;
+        this.debugParams = debugParams;
+        this.log = log;
+    }
+
+    static Database forTesting(DataSource ds, boolean debugParams) {
+        return new Database(ds, debugParams, LoggerFactory.getLogger("DatabaseAPI-IT"));
+    }
+
     public Connection getConnection() throws SQLException { return ds.getConnection(); }
     public DataSource dataSource() { return ds; }
 
@@ -211,6 +223,7 @@ public final class Database implements AutoCloseable {
 
     // Param-less convenience overloads.
     public <T> List<T> query(String sql, Sql.RowMapper<T> mapper) { return query(sql, Sql.Binder.NONE, mapper); }
+    public <T> Optional<T> queryFirst(String sql, Sql.RowMapper<T> mapper) { return queryFirst(sql, Sql.Binder.NONE, mapper); }
     public int update(String sql) { return update(sql, Sql.Binder.NONE); }
 
     /**
