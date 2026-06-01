@@ -4,11 +4,16 @@ import java.util.Locale;
 
 /**
  * Immutable JDBC/pool configuration. Build via the canonical constructor or the
- * {@link #of} convenience (clamps poolSize, leaves timeouts at 0 = Hikari default).
+ * {@link #of} convenience (clamps poolSize, leaves timeouts at 0 = Hikari default,
+ * leaves the truststore unset). Add a custom truststore with {@link #withTrustStore}.
  *
  * <p>{@code debugParams}: when true, {@link DataAccessException} messages include
  * actual bound parameter VALUES (handy for debugging, but may log secrets such as
- * password hashes / emails / IPs). Default false → only param types are logged.
+ * password hashes / emails / IPs — values are control-stripped and length-capped).
+ * Default false → only param types are logged.
+ *
+ * <p>Note: {@link #equals}/{@link #hashCode} are record-generated and therefore
+ * include the password; {@link #toString()} is overridden to redact it.
  */
 public record DatabaseConfig(
     String host, int port, String database,
@@ -16,18 +21,42 @@ public record DatabaseConfig(
     int poolSize,
     long connectionTimeoutMs, long idleTimeoutMs, long maxLifetimeMs,
     SslMode sslMode,
-    boolean debugParams
+    boolean debugParams,
+    String trustStoreUrl, String trustStorePassword, String trustStoreType
 ) {
-    /** Convenience: timeouts default to 0 (use Hikari defaults), poolSize clamped >= 1. */
+    /** Convenience: timeouts default to 0 (use Hikari defaults), poolSize clamped >= 1, no truststore. */
     public static DatabaseConfig of(String host, int port, String database,
                                     String username, String password,
                                     int poolSize, SslMode sslMode, boolean debugParams) {
         return new DatabaseConfig(host, port, database, username, password,
-            Math.max(1, poolSize), 0L, 0L, 0L, sslMode, debugParams);
+            Math.max(1, poolSize), 0L, 0L, 0L, sslMode, debugParams, null, null, null);
     }
 
     public DatabaseConfig {
         poolSize = Math.max(1, poolSize);
+    }
+
+    /**
+     * Returns a copy with a custom truststore so {@code VERIFY_CA}/{@code VERIFY_IDENTITY}
+     * can validate a private-CA / self-hosted MySQL server certificate. {@code type} is e.g.
+     * "JKS" or "PKCS12"; null/blank uses the driver default. {@code storePassword} is the
+     * TRUSTSTORE password — the DB password is preserved from this config.
+     */
+    public DatabaseConfig withTrustStore(String url, String storePassword, String type) {
+        return new DatabaseConfig(host, port, database, username, password, poolSize,
+            connectionTimeoutMs, idleTimeoutMs, maxLifetimeMs, sslMode, debugParams,
+            url, storePassword, type);
+    }
+
+    @Override public String toString() {
+        return "DatabaseConfig[host=" + host + ", port=" + port + ", database=" + database
+            + ", username=" + username + ", password=***, poolSize=" + poolSize
+            + ", connectionTimeoutMs=" + connectionTimeoutMs + ", idleTimeoutMs=" + idleTimeoutMs
+            + ", maxLifetimeMs=" + maxLifetimeMs + ", sslMode=" + sslMode
+            + ", debugParams=" + debugParams
+            + ", trustStoreUrl=" + trustStoreUrl
+            + ", trustStorePassword=" + (trustStorePassword == null ? "null" : "***")
+            + ", trustStoreType=" + trustStoreType + "]";
     }
 
     /**
