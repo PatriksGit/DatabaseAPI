@@ -56,6 +56,14 @@ Errors throw an unchecked `DataAccessException` whose message embeds the SQL (an
 param types; values only when `debugParams=true` — control-stripped and length-capped),
 with the original `SQLException` as cause. Catch it once at your async boundary.
 
+> **PII in logs:** `DataAccessException.getMessage()` is sanitized, but the attached **cause**
+> is not — a MySQL `SQLException` can inline row values (e.g. `Duplicate entry 'a@b.com' ...`).
+> Log `ex.getMessage()`, not the throwable, to keep emails/IPs out of your logs.
+
+Inside a `tx`/`batch` body use the **passed `Connection`** for every statement — calling another
+`Database` helper (`query`/`update`/...) there throws, because it would open a separate pooled
+connection that doesn't join the transaction (and can self-deadlock at small pool sizes).
+
 ## TLS against a private CA
 
 `VERIFY_CA` / `VERIFY_IDENTITY` validate the server certificate against the JVM default
@@ -64,13 +72,16 @@ trust store. For a self-hosted MySQL with a private CA, supply a truststore:
 ```java
 DatabaseConfig cfg = DatabaseConfig.of(host, 3306, db, user, pass, 8,
         DatabaseConfig.SslMode.VERIFY_IDENTITY, false)
-    .withTrustStore("file:/etc/mysql/truststore.jks", trustStorePassword, "JKS");
+    .withTrustStore("file:/etc/mysql/truststore.jks", trustStorePassword, "JKS")
+    .withPoolName("MyPlugin"); // optional; defaults to "MineSide-DB-<database>"
 ```
 
 The truststore path and password are passed as driver dataSource properties (never in the
-JDBC URL string). The library also pins `autoDeserialize`, `allowLoadLocalInfile`,
-`allowUrlInLocalInfile`, and `allowMultiQueries` to `false`.
+JDBC URL string); a remote `http(s)` truststore URL is rejected (MITM). The library also pins
+`autoDeserialize`, `allowLoadLocalInfile`, `allowUrlInLocalInfile`, and `allowMultiQueries` to
+`false`. On a multi-plugin server, set `withPoolName(...)` so each pool is distinguishable in logs.
 
-> **Logging:** do not enable `com.zaxxer.hikari` DEBUG logging in production — HikariCP may
-> print pool configuration. The library never logs the password itself, and
-> `DatabaseConfig.toString()` redacts it.
+> **Logging:** do not enable `com.zaxxer.hikari` DEBUG logging in production. HikariCP prints its
+> pool configuration there, and while it masks the DB password, it does **not** mask the
+> truststore password (`trustCertificateKeyStorePassword`) — it would appear in cleartext. The
+> library never logs credentials itself, and `DatabaseConfig.toString()` redacts both passwords.
