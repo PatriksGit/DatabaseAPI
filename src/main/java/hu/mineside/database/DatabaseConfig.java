@@ -22,14 +22,15 @@ public record DatabaseConfig(
     long connectionTimeoutMs, long idleTimeoutMs, long maxLifetimeMs,
     SslMode sslMode,
     boolean debugParams,
-    String trustStoreUrl, String trustStorePassword, String trustStoreType
+    String trustStoreUrl, String trustStorePassword, String trustStoreType,
+    String poolName
 ) {
-    /** Convenience: timeouts default to 0 (use Hikari defaults), poolSize clamped >= 1, no truststore. */
+    /** Convenience: timeouts default to 0 (use Hikari defaults), poolSize clamped >= 1, no truststore, derived pool name. */
     public static DatabaseConfig of(String host, int port, String database,
                                     String username, String password,
                                     int poolSize, SslMode sslMode, boolean debugParams) {
         return new DatabaseConfig(host, port, database, username, password,
-            Math.max(1, poolSize), 0L, 0L, 0L, sslMode, debugParams, null, null, null);
+            Math.max(1, poolSize), 0L, 0L, 0L, sslMode, debugParams, null, null, null, null);
     }
 
     public DatabaseConfig {
@@ -45,7 +46,19 @@ public record DatabaseConfig(
     public DatabaseConfig withTrustStore(String url, String storePassword, String type) {
         return new DatabaseConfig(host, port, database, username, password, poolSize,
             connectionTimeoutMs, idleTimeoutMs, maxLifetimeMs, sslMode, debugParams,
-            url, storePassword, type);
+            url, storePassword, type, poolName);
+    }
+
+    /**
+     * Returns a copy with an explicit HikariCP pool name (shown in logs / JMX). Recommended on a
+     * multi-plugin server so each plugin's pool is distinguishable. When null/blank, the pool name
+     * defaults to {@code "MineSide-DB-" + database}. Must be JMX-safe (no {@code : , = * ? "} or
+     * control characters) — validated at {@link Database} construction.
+     */
+    public DatabaseConfig withPoolName(String name) {
+        return new DatabaseConfig(host, port, database, username, password, poolSize,
+            connectionTimeoutMs, idleTimeoutMs, maxLifetimeMs, sslMode, debugParams,
+            trustStoreUrl, trustStorePassword, trustStoreType, name);
     }
 
     @Override public String toString() {
@@ -56,7 +69,8 @@ public record DatabaseConfig(
             + ", debugParams=" + debugParams
             + ", trustStoreUrl=" + trustStoreUrl
             + ", trustStorePassword=" + (trustStorePassword == null ? "null" : "***")
-            + ", trustStoreType=" + trustStoreType + "]";
+            + ", trustStoreType=" + trustStoreType
+            + ", poolName=" + poolName + "]";
     }
 
     /**

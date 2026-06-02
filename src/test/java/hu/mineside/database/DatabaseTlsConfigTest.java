@@ -48,4 +48,21 @@ class DatabaseTlsConfigTest {
             assertNull(p.getProperty("trustCertificateKeyStoreUrl"));
         }
     }
+
+    @Test void poolNameDerivedFromDatabaseByDefault() {
+        try (Database d = new Database(base(), LoggerFactory.getLogger("t"))) {
+            assertEquals("MineSide-DB-db", ((HikariDataSource) d.dataSource()).getPoolName());
+        }
+    }
+
+    @Test void poolNameOverrideUsedVerbatim() {
+        try (Database d = new Database(base().withPoolName("MineAuth"), LoggerFactory.getLogger("t"))) {
+            assertEquals("MineAuth", ((HikariDataSource) d.dataSource()).getPoolName());
+        }
+    }
+
+    @Test void poolNameRejectsJmxUnsafeChars() {
+        assertThrows(IllegalArgumentException.class,
+            () -> new Database(base().withPoolName("a:b=c"), LoggerFactory.getLogger("t")));
+    }
 }

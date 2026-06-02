@@ -31,6 +31,9 @@ public final class Database implements AutoCloseable {
     private static final Pattern SAFE_DB_NAME = Pattern.compile("[A-Za-z0-9_]+");
     private static final Pattern SAFE_IDENT = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern SAFE_COLUMN_EXPR = Pattern.compile("[A-Za-z0-9_(),.'\\-\\s]+");
+    // JMX-safe pool name: alnum, dot, underscore, hyphen, space. Excludes : , = * ? " and control chars
+    // so the name can't break the HikariCP JMX ObjectName.
+    private static final Pattern SAFE_POOL_NAME = Pattern.compile("[A-Za-z0-9._\\- ]+");
 
     // True while the current thread is inside a tx()/batch() body. The other helpers open their
     // OWN pooled connection (they don't join the transaction), so calling them from inside a body
@@ -96,7 +99,19 @@ public final class Database implements AutoCloseable {
         hc.setUsername(cfg.username());
         hc.setPassword(cfg.password());
         hc.setMaximumPoolSize(cfg.poolSize());
-        hc.setPoolName("MineSide-DB");
+        // Unique-per-database pool name by default so logs/JMX distinguish each plugin's pool;
+        // an explicit cfg.poolName() overrides it (validated JMX-safe).
+        String poolName;
+        if (cfg.poolName() != null && !cfg.poolName().isBlank()) {
+            if (!SAFE_POOL_NAME.matcher(cfg.poolName()).matches()) {
+                throw new IllegalArgumentException("Invalid poolName '" + cfg.poolName()
+                    + "' — allowed: letters, digits, '.', '_', '-', space (JMX-safe).");
+            }
+            poolName = cfg.poolName();
+        } else {
+            poolName = "MineSide-DB-" + cfg.database();
+        }
+        hc.setPoolName(poolName);
         if (cfg.connectionTimeoutMs() > 0) hc.setConnectionTimeout(cfg.connectionTimeoutMs());
         if (cfg.idleTimeoutMs() > 0) hc.setIdleTimeout(cfg.idleTimeoutMs());
         if (cfg.maxLifetimeMs() > 0) hc.setMaxLifetime(cfg.maxLifetimeMs());
