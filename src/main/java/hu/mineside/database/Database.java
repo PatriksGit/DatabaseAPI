@@ -32,6 +32,11 @@ public final class Database implements AutoCloseable {
     private static final Pattern SAFE_IDENT = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern SAFE_COLUMN_EXPR = Pattern.compile("[A-Za-z0-9_(),.'\\-\\s]+");
 
+    // True while the current thread is inside a tx()/batch() body. The other helpers open their
+    // OWN pooled connection (they don't join the transaction), so calling them from inside a body
+    // is a bug: silent non-atomicity, and a hard self-deadlock at small pool sizes. We fail fast.
+    private static final ThreadLocal<Boolean> IN_TX = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
     // Typed as DataSource (not HikariDataSource) from the start so the test seam
     // (Task 9) can back it with H2. The production constructor assigns a Hikari pool.
     private final DataSource ds;
@@ -221,6 +226,7 @@ public final class Database implements AutoCloseable {
         Objects.requireNonNull(sql, "sql");
         Objects.requireNonNull(binder, "binder");
         Objects.requireNonNull(mapper, "mapper");
+        checkNotInTx();
         List<Object> captured = new ArrayList<>();
         try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             bindAndCapture(ps, binder, captured);
@@ -239,6 +245,7 @@ public final class Database implements AutoCloseable {
         Objects.requireNonNull(sql, "sql");
         Objects.requireNonNull(binder, "binder");
         Objects.requireNonNull(mapper, "mapper");
+        checkNotInTx();
         List<Object> captured = new ArrayList<>();
         try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             bindAndCapture(ps, binder, captured);
@@ -254,6 +261,7 @@ public final class Database implements AutoCloseable {
     public int update(String sql, Sql.Binder binder) {
         Objects.requireNonNull(sql, "sql");
         Objects.requireNonNull(binder, "binder");
+        checkNotInTx();
         List<Object> captured = new ArrayList<>();
         try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             bindAndCapture(ps, binder, captured);
@@ -277,6 +285,16 @@ public final class Database implements AutoCloseable {
         binder.bind(new CapturingPreparedStatement(ps, captured));
     }
 
+    /** Reject opening a second pooled connection from inside a tx()/batch() body. */
+    private static void checkNotInTx() {
+        if (IN_TX.get()) {
+            throw DataAccessException.fromBody(
+                "Nested Database helper call inside a tx()/batch() body — use the passed Connection, "
+                + "not another query/queryFirst/update/batch/tx (it opens a separate pooled connection, "
+                + "does not join the transaction, and can self-deadlock at small pool sizes).", null);
+        }
+    }
+
     /** Default batch chunk size — keeps SQL shapes stable and stays under driver limits. */
     private static final int BATCH_CHUNK = 100;
 
@@ -290,12 +308,14 @@ public final class Database implements AutoCloseable {
         Objects.requireNonNull(sql, "sql");
         Objects.requireNonNull(items, "items");
         Objects.requireNonNull(binder, "binder");
+        checkNotInTx();
         List<T> all = new ArrayList<>();
         for (T it : items) all.add(it);
         if (all.isEmpty()) return new int[0];
         int[] result = new int[all.size()];
         int written = 0;
         Connection c = null;
+        IN_TX.set(true);
         try {
             c = ds.getConnection();
             c.setAutoCommit(false);
@@ -326,6 +346,7 @@ public final class Database implements AutoCloseable {
             if (e instanceof SQLException sqe) throw DataAccessException.wrap(sql, null, debugParams, sqe);
             throw DataAccessException.fromBody("Batch failed: " + sql, e);
         } finally {
+            IN_TX.set(false);
             // HikariCP resets autoCommit to the pool default on return, so no manual restore.
             if (c != null) { try { c.close(); } catch (SQLException ignored) { } }
         }
@@ -343,7 +364,10 @@ public final class Database implements AutoCloseable {
      * body always use the passed {@code Connection c}, never {@code this.update(...)}.
      */
     public <T> T tx(Sql.TxBody<T> body) {
+        Objects.requireNonNull(body, "body");
+        checkNotInTx();
         Connection c = null;
+        IN_TX.set(true);
         try {
             c = ds.getConnection();
             c.setAutoCommit(false);
@@ -362,6 +386,7 @@ public final class Database implements AutoCloseable {
             if (e instanceof SQLException sqe) throw DataAccessException.wrap("<transaction>", null, debugParams, sqe);
             throw DataAccessException.fromBody("Transaction body failed", e);
         } finally {
+            IN_TX.set(false);
             // HikariCP resets autoCommit to the pool default on return, so no manual restore.
             if (c != null) { try { c.close(); } catch (SQLException ignored) { } }
         }

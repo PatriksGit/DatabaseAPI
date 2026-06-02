@@ -35,6 +35,20 @@ class DatabaseHelpersIT {
 
     @AfterEach void tearDown() { db.close(); }
 
+    @Test void nestedHelperInsideTxThrowsAndFlagClears() {
+        // Calling another Database helper inside a tx body must fail fast (it would open a
+        // separate pooled connection that doesn't join the tx and can self-deadlock).
+        assertThrows(DataAccessException.class, () -> db.tx(c -> {
+            db.update("INSERT INTO players (uuid,name,pt) VALUES (?,?,?)",
+                ps -> { ps.setBytes(1, new byte[]{1}); ps.setString(2, "X"); ps.setLong(3, 1); });
+            return null;
+        }));
+        // The IN_TX flag must be cleared afterward: a normal helper works again.
+        int n = db.update("INSERT INTO players (uuid,name,pt) VALUES (?,?,?)",
+            ps -> { ps.setBytes(1, new byte[]{2}); ps.setString(2, "Y"); ps.setLong(3, 1); });
+        assertEquals(1, n);
+    }
+
     @Test void badParamIndexSurfacesAsDataAccessException() {
         // A binder using a 0/invalid index must yield a wrapped DataAccessException (driver's
         // clean SQLException), not a raw IndexOutOfBoundsException from the capturing wrapper.
