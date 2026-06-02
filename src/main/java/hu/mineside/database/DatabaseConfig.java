@@ -73,6 +73,50 @@ public record DatabaseConfig(
             + ", poolName=" + poolName + "]";
     }
 
+    /** Start a fluent builder. Required: host, database, username, password, sslMode. */
+    public static Builder builder() { return new Builder(); }
+
+    /**
+     * Fluent builder for {@link DatabaseConfig}. New config options can be added here as one
+     * method without breaking callers. {@link #build()} fails closed if a required field is unset.
+     */
+    public static final class Builder {
+        private String host, database, username, password;
+        private SslMode sslMode;
+        private int port = 3306;
+        private int poolSize = 10;
+        private long connectionTimeoutMs = 0L, idleTimeoutMs = 0L, maxLifetimeMs = 0L;
+        private boolean debugParams = false;
+        private String trustStoreUrl, trustStorePassword, trustStoreType, poolName;
+
+        public Builder host(String v) { this.host = v; return this; }
+        public Builder port(int v) { this.port = v; return this; }
+        public Builder database(String v) { this.database = v; return this; }
+        public Builder username(String v) { this.username = v; return this; }
+        public Builder password(String v) { this.password = v; return this; }
+        public Builder poolSize(int v) { this.poolSize = v; return this; }
+        public Builder connectionTimeoutMs(long v) { this.connectionTimeoutMs = v; return this; }
+        public Builder idleTimeoutMs(long v) { this.idleTimeoutMs = v; return this; }
+        public Builder maxLifetimeMs(long v) { this.maxLifetimeMs = v; return this; }
+        public Builder sslMode(SslMode v) { this.sslMode = v; return this; }
+        public Builder debugParams(boolean v) { this.debugParams = v; return this; }
+        public Builder trustStore(String url, String storePassword, String type) {
+            this.trustStoreUrl = url; this.trustStorePassword = storePassword; this.trustStoreType = type; return this;
+        }
+        public Builder poolName(String v) { this.poolName = v; return this; }
+
+        public DatabaseConfig build() {
+            java.util.Objects.requireNonNull(host, "host");
+            java.util.Objects.requireNonNull(database, "database");
+            java.util.Objects.requireNonNull(username, "username");
+            java.util.Objects.requireNonNull(password, "password");
+            java.util.Objects.requireNonNull(sslMode, "sslMode");
+            return new DatabaseConfig(host, port, database, username, password, poolSize,
+                connectionTimeoutMs, idleTimeoutMs, maxLifetimeMs, sslMode, debugParams,
+                trustStoreUrl, trustStorePassword, trustStoreType, poolName);
+        }
+    }
+
     /**
      * TLS posture for the JDBC connection. Maps directly to Connector/J's
      * {@code sslMode} URL parameter.
