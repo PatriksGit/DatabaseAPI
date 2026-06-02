@@ -65,4 +65,11 @@ class DatabaseTlsConfigTest {
         assertThrows(IllegalArgumentException.class,
             () -> new Database(base().withPoolName("a:b=c"), LoggerFactory.getLogger("t")));
     }
+
+    @Test void rejectsRemoteTrustStoreUrl() {
+        assertThrows(IllegalArgumentException.class,
+            () -> new Database(base().withTrustStore("https://evil/ca.jks", "p", "JKS"), LoggerFactory.getLogger("t")));
+        assertThrows(IllegalArgumentException.class,
+            () -> new Database(base().withTrustStore("http://evil/ca.jks", "p", "JKS"), LoggerFactory.getLogger("t")));
+    }
 }

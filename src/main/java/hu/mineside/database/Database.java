@@ -140,6 +140,11 @@ public final class Database implements AutoCloseable {
         // Set as dataSource properties (NOT in the URL string) so the path/password never enter
         // the concatenated JDBC URL.
         if (cfg.trustStoreUrl() != null && !cfg.trustStoreUrl().isBlank()) {
+            String tsLower = cfg.trustStoreUrl().trim().toLowerCase(java.util.Locale.ROOT);
+            if (tsLower.startsWith("http:") || tsLower.startsWith("https:")) {
+                throw new IllegalArgumentException("Refusing http(s) trustStoreUrl '" + cfg.trustStoreUrl()
+                    + "': a remotely fetched truststore enables MITM. Use a local file: URL.");
+            }
             hc.addDataSourceProperty("trustCertificateKeyStoreUrl", cfg.trustStoreUrl());
             if (cfg.trustStorePassword() != null)
                 hc.addDataSourceProperty("trustCertificateKeyStorePassword", cfg.trustStorePassword());
