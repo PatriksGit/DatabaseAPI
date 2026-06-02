@@ -35,6 +35,14 @@ class DatabaseHelpersIT {
 
     @AfterEach void tearDown() { db.close(); }
 
+    @Test void badParamIndexSurfacesAsDataAccessException() {
+        // A binder using a 0/invalid index must yield a wrapped DataAccessException (driver's
+        // clean SQLException), not a raw IndexOutOfBoundsException from the capturing wrapper.
+        assertThrows(DataAccessException.class, () -> db.update(
+            "INSERT INTO players (uuid,name,pt) VALUES (?,?,?)",
+            ps -> ps.setString(0, "x")));
+    }
+
     @Test void queryFirstToleratesNullMapperResult() {
         db.update("INSERT INTO players (uuid, name, pt) VALUES (?,?,?)",
             ps -> { ps.setBytes(1, new byte[]{1}); ps.setString(2, "Steve"); ps.setLong(3, 100); });

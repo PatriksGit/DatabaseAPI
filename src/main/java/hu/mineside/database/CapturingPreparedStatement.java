@@ -22,27 +22,36 @@ final class CapturingPreparedStatement implements PreparedStatement {
         this.captured = captured;
     }
 
+    /** Upper bound on recorded parameter index — guards against a pathological index OOM-ing the list. */
+    private static final int MAX_CAPTURE_INDEX = 4096;
+
     private void capture(int index, Object value) {
+        // Defensive: a bad/huge index would otherwise pad the list unboundedly (OOM) or set(-1).
+        // The delegate setter runs first (see setters below), so a real driver has already rejected
+        // an out-of-range index with a clean SQLException before we get here.
+        if (index < 1 || index > MAX_CAPTURE_INDEX) return;
         // pad so the list is dense in parameter order (1-based -> 0-based)
         while (captured.size() < index) captured.add(null);
         captured.set(index - 1, value);
     }
 
     // --- recorded setters (the ones repositories use) ---
-    @Override public void setString(int i, String x) throws SQLException { capture(i, x); d.setString(i, x); }
-    @Override public void setInt(int i, int x) throws SQLException { capture(i, x); d.setInt(i, x); }
-    @Override public void setLong(int i, long x) throws SQLException { capture(i, x); d.setLong(i, x); }
-    @Override public void setBoolean(int i, boolean x) throws SQLException { capture(i, x); d.setBoolean(i, x); }
-    @Override public void setDouble(int i, double x) throws SQLException { capture(i, x); d.setDouble(i, x); }
-    @Override public void setFloat(int i, float x) throws SQLException { capture(i, x); d.setFloat(i, x); }
-    @Override public void setShort(int i, short x) throws SQLException { capture(i, x); d.setShort(i, x); }
-    @Override public void setByte(int i, byte x) throws SQLException { capture(i, x); d.setByte(i, x); }
-    @Override public void setBytes(int i, byte[] x) throws SQLException { capture(i, x); d.setBytes(i, x); }
-    @Override public void setObject(int i, Object x) throws SQLException { capture(i, x); d.setObject(i, x); }
-    @Override public void setObject(int i, Object x, int t) throws SQLException { capture(i, x); d.setObject(i, x, t); }
-    @Override public void setTimestamp(int i, Timestamp x) throws SQLException { capture(i, x); d.setTimestamp(i, x); }
-    @Override public void setDate(int i, Date x) throws SQLException { capture(i, x); d.setDate(i, x); }
-    @Override public void setNull(int i, int t) throws SQLException { capture(i, null); d.setNull(i, t); }
+    // Delegate FIRST, then capture: a bad index surfaces as the driver's clean SQLException
+    // (wrapped into DataAccessException) instead of a raw IndexOutOfBounds from our padding.
+    @Override public void setString(int i, String x) throws SQLException { d.setString(i, x); capture(i, x); }
+    @Override public void setInt(int i, int x) throws SQLException { d.setInt(i, x); capture(i, x); }
+    @Override public void setLong(int i, long x) throws SQLException { d.setLong(i, x); capture(i, x); }
+    @Override public void setBoolean(int i, boolean x) throws SQLException { d.setBoolean(i, x); capture(i, x); }
+    @Override public void setDouble(int i, double x) throws SQLException { d.setDouble(i, x); capture(i, x); }
+    @Override public void setFloat(int i, float x) throws SQLException { d.setFloat(i, x); capture(i, x); }
+    @Override public void setShort(int i, short x) throws SQLException { d.setShort(i, x); capture(i, x); }
+    @Override public void setByte(int i, byte x) throws SQLException { d.setByte(i, x); capture(i, x); }
+    @Override public void setBytes(int i, byte[] x) throws SQLException { d.setBytes(i, x); capture(i, x); }
+    @Override public void setObject(int i, Object x) throws SQLException { d.setObject(i, x); capture(i, x); }
+    @Override public void setObject(int i, Object x, int t) throws SQLException { d.setObject(i, x, t); capture(i, x); }
+    @Override public void setTimestamp(int i, Timestamp x) throws SQLException { d.setTimestamp(i, x); capture(i, x); }
+    @Override public void setDate(int i, Date x) throws SQLException { d.setDate(i, x); capture(i, x); }
+    @Override public void setNull(int i, int t) throws SQLException { d.setNull(i, t); capture(i, null); }
 
     // --- pure delegation for everything else ---
     @Override public ResultSet executeQuery() throws SQLException { return d.executeQuery(); }
@@ -126,10 +135,10 @@ final class CapturingPreparedStatement implements PreparedStatement {
     @Override public void setRowId(int i, RowId x) throws SQLException { d.setRowId(i, x); }
     @Override public void setSQLXML(int i, SQLXML x) throws SQLException { d.setSQLXML(i, x); }
     @Override public void setUnicodeStream(int i, InputStream x, int l) throws SQLException { d.setUnicodeStream(i, x, l); }
-    @Override public void setNull(int i, int t, String tn) throws SQLException { capture(i, null); d.setNull(i, t, tn); }
-    @Override public void setTimestamp(int i, Timestamp x, java.util.Calendar c) throws SQLException { capture(i, x); d.setTimestamp(i, x, c); }
+    @Override public void setNull(int i, int t, String tn) throws SQLException { d.setNull(i, t, tn); capture(i, null); }
+    @Override public void setTimestamp(int i, Timestamp x, java.util.Calendar c) throws SQLException { d.setTimestamp(i, x, c); capture(i, x); }
     @Override public void setTime(int i, Time x, java.util.Calendar c) throws SQLException { d.setTime(i, x, c); }
-    @Override public void setDate(int i, Date x, java.util.Calendar c) throws SQLException { capture(i, x); d.setDate(i, x, c); }
-    @Override public void setObject(int i, Object x, SQLType t, int s) throws SQLException { capture(i, x); d.setObject(i, x, t, s); }
-    @Override public void setObject(int i, Object x, SQLType t) throws SQLException { capture(i, x); d.setObject(i, x, t); }
+    @Override public void setDate(int i, Date x, java.util.Calendar c) throws SQLException { d.setDate(i, x, c); capture(i, x); }
+    @Override public void setObject(int i, Object x, SQLType t, int s) throws SQLException { d.setObject(i, x, t, s); capture(i, x); }
+    @Override public void setObject(int i, Object x, SQLType t) throws SQLException { d.setObject(i, x, t); capture(i, x); }
 }
