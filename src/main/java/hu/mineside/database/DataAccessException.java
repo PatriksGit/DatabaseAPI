@@ -15,6 +15,12 @@ import java.util.StringJoiner;
  * control-stripped (newlines/tabs/control chars → spaces) and debug values are
  * length-capped — this prevents log-injection via attacker-controlled parameters
  * and avoids dumping huge blobs.
+ *
+ * <p><b>Logging note:</b> {@link #getMessage()} is sanitized, but the attached
+ * {@link #getCause()} object is NOT — a MySQL {@code SQLException} can inline row
+ * values in its own message (e.g. {@code Duplicate entry 'a@b.com' for key ...}).
+ * To keep logs PII-safe, log {@code ex.getMessage()} rather than the throwable, or
+ * scrub the cause chain before logging full stack traces.
  */
 public final class DataAccessException extends RuntimeException {
 
@@ -55,10 +61,13 @@ public final class DataAccessException extends RuntimeException {
         return p.getClass().getSimpleName();
     }
 
-    /** Replace control characters (incl. newline/tab and DEL) with spaces so the message is one line. */
+    /**
+     * Replace control characters (incl. newline/tab, DEL) and the Unicode line separators
+     * NEL (U+0085), LS (U+2028), PS (U+2029) with spaces so the message stays one log line.
+     */
     private static String stripControl(String s) {
         if (s == null) return null;
-        return s.replaceAll("[\\u0000-\\u001F\\u007F]", " ");
+        return s.replaceAll("[\\u0000-\\u001F\\u007F\\u0085\\u2028\\u2029]", " ");
     }
 
     /** Cap a rendered value; if over the limit, keep the head and append the original length. */

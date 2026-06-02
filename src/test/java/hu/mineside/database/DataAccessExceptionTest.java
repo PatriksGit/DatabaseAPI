@@ -74,6 +74,15 @@ class DataAccessExceptionTest {
         assertTrue(m.contains("Duplicate entry"), "cause text still present");
     }
 
+    @Test void unicodeLineSeparatorsStripped() {
+        // NEL (), LS ( ), PS ( ) are not \n but some viewers/parsers break lines on them.
+        DataAccessException e = DataAccessException.wrap(SQL, java.util.List.of("ab c d"), true, cause);
+        String m = e.getMessage();
+        assertFalse(m.contains(""), "NEL stripped");
+        assertFalse(m.contains(" "), "LS stripped");
+        assertFalse(m.contains(" "), "PS stripped");
+    }
+
     @Test void byteArrayNeverDumpedEvenInDebug() {
         DataAccessException e = DataAccessException.wrap(SQL, java.util.List.of(new byte[]{1, 2, 3, 4}), true, cause);
         assertTrue(e.getMessage().contains("byte[4]"), "byte[] rendered content-free as byte[N]");
