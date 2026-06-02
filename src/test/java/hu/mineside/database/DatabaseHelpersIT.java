@@ -35,6 +35,15 @@ class DatabaseHelpersIT {
 
     @AfterEach void tearDown() { db.close(); }
 
+    @Test void queryFirstToleratesNullMapperResult() {
+        db.update("INSERT INTO players (uuid, name, pt) VALUES (?,?,?)",
+            ps -> { ps.setBytes(1, new byte[]{1}); ps.setString(2, "Steve"); ps.setLong(3, 100); });
+        // A mapper that legitimately returns null for the matched row must yield empty, not NPE.
+        Optional<String> r = db.queryFirst("SELECT name FROM players WHERE uuid=?",
+            ps -> ps.setBytes(1, new byte[]{1}), rs -> null);
+        assertEquals(Optional.empty(), r);
+    }
+
     @Test void updateThenQueryFirst() {
         int n = db.update("INSERT INTO players (uuid, name, pt) VALUES (?,?,?)",
             ps -> { ps.setBytes(1, new byte[]{1}); ps.setString(2, "Steve"); ps.setLong(3, 100); });

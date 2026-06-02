@@ -34,4 +34,15 @@ class DatabaseValidationTest {
         assertDoesNotThrow(() ->
             new Database(cfg("[::1]", 3306, "mydb"), LoggerFactory.getLogger("t")).close());
     }
+
+    @Test void helpersRejectNullArgs() {
+        // requireNonNull fires before any connection is opened, so no DB is needed.
+        try (Database d = new Database(cfg("localhost", 3306, "db"), LoggerFactory.getLogger("t"))) {
+            assertThrows(NullPointerException.class, () -> d.query(null, rs -> rs.getString(1)));
+            assertThrows(NullPointerException.class, () -> d.update(null));
+            assertThrows(NullPointerException.class, () -> d.batch("INSERT", null, (ps, x) -> { }));
+            assertThrows(NullPointerException.class,
+                () -> d.queryFirst("SELECT 1", (Sql.RowMapper<String>) null));
+        }
+    }
 }

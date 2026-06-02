@@ -12,6 +12,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -217,6 +218,9 @@ public final class Database implements AutoCloseable {
 
     /** Run a SELECT, mapping every row. */
     public <T> List<T> query(String sql, Sql.Binder binder, Sql.RowMapper<T> mapper) {
+        Objects.requireNonNull(sql, "sql");
+        Objects.requireNonNull(binder, "binder");
+        Objects.requireNonNull(mapper, "mapper");
         List<Object> captured = new ArrayList<>();
         try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             bindAndCapture(ps, binder, captured);
@@ -232,11 +236,14 @@ public final class Database implements AutoCloseable {
 
     /** Run a SELECT, returning the first row if any. */
     public <T> Optional<T> queryFirst(String sql, Sql.Binder binder, Sql.RowMapper<T> mapper) {
+        Objects.requireNonNull(sql, "sql");
+        Objects.requireNonNull(binder, "binder");
+        Objects.requireNonNull(mapper, "mapper");
         List<Object> captured = new ArrayList<>();
         try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             bindAndCapture(ps, binder, captured);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(mapper.map(rs)) : Optional.empty();
+                return rs.next() ? Optional.ofNullable(mapper.map(rs)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw DataAccessException.wrap(sql, captured, debugParams, e);
@@ -245,6 +252,8 @@ public final class Database implements AutoCloseable {
 
     /** Run an INSERT/UPDATE/DELETE; returns affected rows. */
     public int update(String sql, Sql.Binder binder) {
+        Objects.requireNonNull(sql, "sql");
+        Objects.requireNonNull(binder, "binder");
         List<Object> captured = new ArrayList<>();
         try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             bindAndCapture(ps, binder, captured);
@@ -278,6 +287,9 @@ public final class Database implements AutoCloseable {
      * cannot leave earlier chunks committed — the whole batch is all-or-nothing.
      */
     public <T> int[] batch(String sql, Iterable<T> items, Sql.BiBinder<T> binder) {
+        Objects.requireNonNull(sql, "sql");
+        Objects.requireNonNull(items, "items");
+        Objects.requireNonNull(binder, "binder");
         List<T> all = new ArrayList<>();
         for (T it : items) all.add(it);
         if (all.isEmpty()) return new int[0];
