@@ -49,6 +49,19 @@ class DatabaseHelpersIT {
         assertEquals(1, n);
     }
 
+    @Test void crossInstanceHelperInsideTxIsAllowed() {
+        // The IN_TX guard is per-instance: a tx on one Database may call a helper on a DIFFERENT
+        // Database (separate pool) — that's safe and must NOT throw.
+        Database other = Database.forTesting(db.dataSource(), false);
+        int[] affected = new int[1];
+        db.tx(c -> {
+            affected[0] = other.update("INSERT INTO players (uuid,name,pt) VALUES (?,?,?)",
+                ps -> { ps.setBytes(1, new byte[]{3}); ps.setString(2, "Z"); ps.setLong(3, 1); });
+            return null;
+        });
+        assertEquals(1, affected[0]);
+    }
+
     @Test void badParamIndexSurfacesAsDataAccessException() {
         // A binder using a 0/invalid index must yield a wrapped DataAccessException (driver's
         // clean SQLException), not a raw IndexOutOfBoundsException from the capturing wrapper.
