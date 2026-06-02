@@ -77,8 +77,10 @@ DatabaseConfig cfg = DatabaseConfig.builder()
 ```
 
 Need a HikariCP/driver setting the library doesn't model? Pass a customizer to `Database`. It runs
-first, then the library re-asserts its security settings (TLS mode, driver flags, truststore) so
-hardening always wins:
+first, then the library re-asserts a specific set of protections after it (the TLS mode in the JDBC
+URL, the driver class, the four blast-radius flags, and the configured truststore) — those cannot
+be overridden. It is a targeted re-assertion, **not a sandbox**: the customizer is trusted developer
+code and can still set other driver properties, so don't feed it semi-trusted config.
 
 ```java
 Database db = new Database(cfg, logger, hc -> hc.setMaximumPoolSize(20));

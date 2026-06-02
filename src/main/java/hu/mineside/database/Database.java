@@ -55,9 +55,14 @@ public final class Database implements AutoCloseable {
 
     /**
      * As {@link #Database(DatabaseConfig, Logger)}, plus an optional escape hatch to set any
-     * HikariConfig property the library does not model. The {@code customizer} runs FIRST; the
-     * library then re-asserts its security-critical settings (jdbcUrl/sslMode, driver class, the
-     * blast-radius flags, and the truststore) so hardening cannot be silently weakened.
+     * HikariConfig property the library does not model. The {@code customizer} runs FIRST (before
+     * the JDBC URL and driver class are set — so reading {@code hc.getJdbcUrl()} inside it yields
+     * null); the library then re-asserts a SPECIFIC set of protections after it: the jdbcUrl
+     * (carrying {@code sslMode} + {@code useAffectedRows}), the driver class, the four blast-radius
+     * flags, and the configured truststore. Those enumerated settings cannot be overridden by the
+     * customizer. This is a targeted re-assertion, NOT a sandbox: the customizer can still set
+     * other driver properties (e.g. a truststore when none is configured), so treat it as trusted
+     * developer code, not a place to forward semi-trusted config.
      */
     public Database(DatabaseConfig cfg, Logger log, Consumer<HikariConfig> customizer) {
         this.debugParams = cfg.debugParams();
