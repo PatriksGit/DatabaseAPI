@@ -25,9 +25,9 @@ public final class DataAccessException extends RuntimeException {
         super(message, cause);
     }
 
-    /** Wrap a non-SQL failure from inside a {@code tx} body (preserves the cause). */
+    /** Wrap a non-SQL failure from inside a {@code tx}/{@code batch} body (preserves the cause). */
     static DataAccessException fromBody(String message, Throwable cause) {
-        return new DataAccessException(message, cause);
+        return new DataAccessException(stripControl(message), cause);
     }
 
     static DataAccessException wrap(String sql, List<?> params, boolean debugParams, SQLException cause) {
@@ -39,7 +39,7 @@ public final class DataAccessException extends RuntimeException {
         }
         if (cause != null) {
             sb.append(" (").append(cause.getClass().getSimpleName())
-              .append(": ").append(cause.getMessage())
+              .append(": ").append(stripControl(cause.getMessage()))
               .append(", SQLState=").append(cause.getSQLState())
               .append(", code=").append(cause.getErrorCode()).append(')');
         }

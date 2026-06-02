@@ -63,4 +63,20 @@ class DataAccessExceptionTest {
         assertFalse(m.contains("\t"), "tab stripped from SQL");
         assertTrue(m.contains("SELECT *"), "SQL still readable");
     }
+
+    @Test void causeMessageControlCharsStripped() {
+        // MySQL echoes user data in error messages (e.g. 1062 "Duplicate entry '<value>'
+        // for key '<key>'") — a newline in <value> would forge a log line via the cause.
+        SQLException dirty = new SQLException("Duplicate entry 'a\nb' for key 'x'", "23000", 1062);
+        DataAccessException e = DataAccessException.wrap(SQL, null, false, dirty);
+        String m = e.getMessage();
+        assertFalse(m.contains("\n"), "cause message must be control-stripped");
+        assertTrue(m.contains("Duplicate entry"), "cause text still present");
+    }
+
+    @Test void fromBodyMessageControlCharsStripped() {
+        DataAccessException e = DataAccessException.fromBody("Batch failed: INSERT\nINTO t", new RuntimeException("x"));
+        assertFalse(e.getMessage().contains("\n"), "fromBody message must be control-stripped");
+        assertTrue(e.getMessage().contains("Batch failed"));
+    }
 }
