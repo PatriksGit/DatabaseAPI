@@ -10,8 +10,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class DatabaseTlsConfigTest {
 
+    private static DatabaseConfig.Builder b() {
+        return DatabaseConfig.builder()
+            .host("localhost").database("db").username("u").password("p")
+            .poolSize(4).sslMode(SslMode.DISABLED);
+    }
+
     private static DatabaseConfig base() {
-        return DatabaseConfig.of("localhost", 3306, "db", "u", "p", 4, SslMode.DISABLED, false);
+        return b().build();
     }
 
     @Test void blastRadiusFlagsPinnedOff() {
@@ -33,7 +39,7 @@ class DatabaseTlsConfigTest {
     }
 
     @Test void trustStorePropertiesSetWhenProvided() {
-        DatabaseConfig cfg = base().withTrustStore("file:/ks.jks", "tspw", "PKCS12");
+        DatabaseConfig cfg = b().trustStore("file:/ks.jks", "tspw", "PKCS12").build();
         try (Database d = new Database(cfg, LoggerFactory.getLogger("t"))) {
             Properties p = ((HikariDataSource) d.dataSource()).getDataSourceProperties();
             assertEquals("file:/ks.jks", p.getProperty("trustCertificateKeyStoreUrl"));
@@ -56,20 +62,20 @@ class DatabaseTlsConfigTest {
     }
 
     @Test void poolNameOverrideUsedVerbatim() {
-        try (Database d = new Database(base().withPoolName("MineAuth"), LoggerFactory.getLogger("t"))) {
+        try (Database d = new Database(b().poolName("MineAuth").build(), LoggerFactory.getLogger("t"))) {
             assertEquals("MineAuth", ((HikariDataSource) d.dataSource()).getPoolName());
         }
     }
 
     @Test void poolNameRejectsJmxUnsafeChars() {
         assertThrows(IllegalArgumentException.class,
-            () -> new Database(base().withPoolName("a:b=c"), LoggerFactory.getLogger("t")));
+            () -> new Database(b().poolName("a:b=c").build(), LoggerFactory.getLogger("t")));
     }
 
     @Test void rejectsRemoteTrustStoreUrl() {
         assertThrows(IllegalArgumentException.class,
-            () -> new Database(base().withTrustStore("https://evil/ca.jks", "p", "JKS"), LoggerFactory.getLogger("t")));
+            () -> new Database(b().trustStore("https://evil/ca.jks", "p", "JKS").build(), LoggerFactory.getLogger("t")));
         assertThrows(IllegalArgumentException.class,
-            () -> new Database(base().withTrustStore("http://evil/ca.jks", "p", "JKS"), LoggerFactory.getLogger("t")));
+            () -> new Database(b().trustStore("http://evil/ca.jks", "p", "JKS").build(), LoggerFactory.getLogger("t")));
     }
 }

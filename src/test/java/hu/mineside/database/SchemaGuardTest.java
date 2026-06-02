@@ -9,7 +9,9 @@ class SchemaGuardTest {
 
     private Database db() {
         return new Database(
-            DatabaseConfig.of("localhost", 3306, "db", "u", "p", 1, SslMode.DISABLED, false),
+            DatabaseConfig.builder()
+                .host("localhost").database("db").username("u").password("p")
+                .poolSize(1).sslMode(SslMode.DISABLED).build(),
             LoggerFactory.getLogger("t"));
     }
 

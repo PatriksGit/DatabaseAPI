@@ -10,7 +10,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class DatabaseCustomizerTest {
 
     private static DatabaseConfig cfg() {
-        return DatabaseConfig.of("localhost", 3306, "db", "u", "p", 4, SslMode.VERIFY_IDENTITY, false);
+        return DatabaseConfig.builder()
+            .host("localhost").database("db").username("u").password("p")
+            .poolSize(4).sslMode(SslMode.VERIFY_IDENTITY).build();
     }
 
     @Test void customizerIsApplied() {

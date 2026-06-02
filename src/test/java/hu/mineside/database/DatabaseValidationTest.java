@@ -8,7 +8,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class DatabaseValidationTest {
 
     private static DatabaseConfig cfg(String host, int port, String db) {
-        return DatabaseConfig.of(host, port, db, "u", "p", 4, SslMode.DISABLED, false);
+        return DatabaseConfig.builder()
+            .host(host).port(port).database(db).username("u").password("p")
+            .poolSize(4).sslMode(SslMode.DISABLED).build();
     }
 
     @Test void rejectsBadHost() {

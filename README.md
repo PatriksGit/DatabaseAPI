@@ -22,8 +22,10 @@ excludes slf4j (provided by the platform), exactly like the other MineSide plugi
 ## Use
 
 ```java
-DatabaseConfig cfg = DatabaseConfig.of(host, 3306, "mydb", user, pass, 8,
-    DatabaseConfig.SslMode.parse(sslModeString), /*debugParams*/ false);
+DatabaseConfig cfg = DatabaseConfig.builder()
+    .host(host).database("mydb").username(user).password(pass)
+    .sslMode(DatabaseConfig.SslMode.parse(sslModeString)).poolSize(8)
+    .build();
 Database db = new Database(cfg, slf4jLogger);
 
 // schema (once, at startup)
@@ -66,8 +68,9 @@ connection that doesn't join the transaction (and can self-deadlock at small poo
 
 ## Building config
 
-`DatabaseConfig.of(...)` is the quick path; `DatabaseConfig.builder()` is the explicit,
-mistake-resistant one and the place new options land without breaking callers:
+`DatabaseConfig.builder()` is the single construction entry point — explicit, mistake-resistant,
+and the place new options land without breaking callers. `build()` fails closed if a required field
+(host, database, username, password, sslMode) is missing:
 
 ```java
 DatabaseConfig cfg = DatabaseConfig.builder()
@@ -92,10 +95,12 @@ Database db = new Database(cfg, logger, hc -> hc.setMaximumPoolSize(20));
 trust store. For a self-hosted MySQL with a private CA, supply a truststore:
 
 ```java
-DatabaseConfig cfg = DatabaseConfig.of(host, 3306, db, user, pass, 8,
-        DatabaseConfig.SslMode.VERIFY_IDENTITY, false)
-    .withTrustStore("file:/etc/mysql/truststore.jks", trustStorePassword, "JKS")
-    .withPoolName("MyPlugin"); // optional; defaults to "MineSide-DB-<database>"
+DatabaseConfig cfg = DatabaseConfig.builder()
+    .host(host).database(db).username(user).password(pass)
+    .sslMode(DatabaseConfig.SslMode.VERIFY_IDENTITY).poolSize(8)
+    .trustStore("file:/etc/mysql/truststore.jks", trustStorePassword, "JKS")
+    .poolName("MyPlugin")   // optional; defaults to "MineSide-DB-<database>"
+    .build();
 ```
 
 The truststore path and password are passed as driver dataSource properties (never in the

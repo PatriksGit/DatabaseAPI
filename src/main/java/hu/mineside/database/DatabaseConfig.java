@@ -3,9 +3,8 @@ package hu.mineside.database;
 import java.util.Locale;
 
 /**
- * Immutable JDBC/pool configuration. Build via the canonical constructor or the
- * {@link #of} convenience (clamps poolSize, leaves timeouts at 0 = Hikari default,
- * leaves the truststore unset). Add a custom truststore with {@link #withTrustStore}.
+ * Immutable JDBC/pool configuration. Build it with {@link #builder()} — the single, fail-closed
+ * construction entry point (a custom truststore and pool name are builder methods too).
  *
  * <p>{@code debugParams}: when true, {@link DataAccessException} messages include
  * actual bound parameter VALUES (handy for debugging, but may log secrets such as
@@ -13,7 +12,8 @@ import java.util.Locale;
  * Default false → only param types are logged.
  *
  * <p>Note: {@link #equals}/{@link #hashCode} are record-generated and therefore
- * include the password; {@link #toString()} is overridden to redact it.
+ * include the password; {@link #toString()} is overridden to redact it. The canonical
+ * constructor is low-level (all components positional) — use {@link #builder()} instead.
  */
 public record DatabaseConfig(
     String host, int port, String database,
@@ -25,40 +25,8 @@ public record DatabaseConfig(
     String trustStoreUrl, String trustStorePassword, String trustStoreType,
     String poolName
 ) {
-    /** Convenience: timeouts default to 0 (use Hikari defaults), poolSize clamped >= 1, no truststore, derived pool name. */
-    public static DatabaseConfig of(String host, int port, String database,
-                                    String username, String password,
-                                    int poolSize, SslMode sslMode, boolean debugParams) {
-        return new DatabaseConfig(host, port, database, username, password,
-            Math.max(1, poolSize), 0L, 0L, 0L, sslMode, debugParams, null, null, null, null);
-    }
-
     public DatabaseConfig {
         poolSize = Math.max(1, poolSize);
-    }
-
-    /**
-     * Returns a copy with a custom truststore so {@code VERIFY_CA}/{@code VERIFY_IDENTITY}
-     * can validate a private-CA / self-hosted MySQL server certificate. {@code type} is e.g.
-     * "JKS" or "PKCS12"; null/blank uses the driver default. {@code storePassword} is the
-     * TRUSTSTORE password — the DB password is preserved from this config.
-     */
-    public DatabaseConfig withTrustStore(String url, String storePassword, String type) {
-        return new DatabaseConfig(host, port, database, username, password, poolSize,
-            connectionTimeoutMs, idleTimeoutMs, maxLifetimeMs, sslMode, debugParams,
-            url, storePassword, type, poolName);
-    }
-
-    /**
-     * Returns a copy with an explicit HikariCP pool name (shown in logs / JMX). Recommended on a
-     * multi-plugin server so each plugin's pool is distinguishable. When null/blank, the pool name
-     * defaults to {@code "MineSide-DB-" + database}. Must be JMX-safe (no {@code : , = * ? "} or
-     * control characters) — validated at {@link Database} construction.
-     */
-    public DatabaseConfig withPoolName(String name) {
-        return new DatabaseConfig(host, port, database, username, password, poolSize,
-            connectionTimeoutMs, idleTimeoutMs, maxLifetimeMs, sslMode, debugParams,
-            trustStoreUrl, trustStorePassword, trustStoreType, name);
     }
 
     @Override public String toString() {
