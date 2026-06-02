@@ -109,7 +109,9 @@ public final class Database implements AutoCloseable {
         hc.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
         // Pin Connector/J blast-radius flags OFF. Safe on 8.3 defaults today, but this lib
         // is shaded into every plugin — explicit pins are immune to a future driver-default flip.
-        hc.addDataSourceProperty("autoDeserialize", "false");        // Java-object deser RCE via BLOB
+        // autoDeserialize (Java-object deser RCE via BLOB) was removed in Connector/J 8.x, so
+        // this is a no-op there; kept as a defensive pin for consumers that shade an older driver.
+        hc.addDataSourceProperty("autoDeserialize", "false");
         hc.addDataSourceProperty("allowLoadLocalInfile", "false");   // LOCAL INFILE file-read by a rogue server
         hc.addDataSourceProperty("allowUrlInLocalInfile", "false");
         hc.addDataSourceProperty("allowMultiQueries", "false");      // stacked-query amplification

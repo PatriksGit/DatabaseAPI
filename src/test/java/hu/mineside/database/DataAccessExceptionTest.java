@@ -74,6 +74,12 @@ class DataAccessExceptionTest {
         assertTrue(m.contains("Duplicate entry"), "cause text still present");
     }
 
+    @Test void byteArrayNeverDumpedEvenInDebug() {
+        DataAccessException e = DataAccessException.wrap(SQL, java.util.List.of(new byte[]{1, 2, 3, 4}), true, cause);
+        assertTrue(e.getMessage().contains("byte[4]"), "byte[] rendered content-free as byte[N]");
+        assertFalse(e.getMessage().contains("[B@"), "no array identity hash leaked");
+    }
+
     @Test void fromBodyMessageControlCharsStripped() {
         DataAccessException e = DataAccessException.fromBody("Batch failed: INSERT\nINTO t", new RuntimeException("x"));
         assertFalse(e.getMessage().contains("\n"), "fromBody message must be control-stripped");

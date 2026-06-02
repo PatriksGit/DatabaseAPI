@@ -48,9 +48,10 @@ public final class DataAccessException extends RuntimeException {
 
     private static String describe(Object p, boolean debugParams) {
         if (p == null) return "null";
-        if (debugParams) return truncate(stripControl(String.valueOf(p)));
-        // byte[] (UUID/BINARY) prints as e.g. byte[16]; everything else by simple type name
+        // byte[] (UUID/BINARY) always prints as byte[N] (content-free) in BOTH modes — never
+        // dump raw bytes nor the useless array identity hash from String.valueOf(byte[]).
         if (p instanceof byte[] b) return "byte[" + b.length + "]";
+        if (debugParams) return truncate(stripControl(String.valueOf(p)));
         return p.getClass().getSimpleName();
     }
 
