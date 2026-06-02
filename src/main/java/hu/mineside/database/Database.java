@@ -3,7 +3,6 @@ package hu.mineside.database;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -14,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
@@ -34,12 +34,13 @@ public final class Database implements AutoCloseable {
     // JMX-safe pool name: alnum, dot, underscore, hyphen, space. Excludes : , = * ? " and control chars
     // so the name can't break the HikariCP JMX ObjectName.
     private static final Pattern SAFE_POOL_NAME = Pattern.compile("[A-Za-z0-9._\\- ]+");
+    /** Default batch chunk size — keeps SQL shapes stable and stays under driver limits. */
+    private static final int BATCH_CHUNK = 100;
 
-    // Typed as DataSource (not HikariDataSource) from the start so the test seam
-    // (Task 9) can back it with H2. The production constructor assigns a Hikari pool.
+    // Typed as DataSource (not HikariDataSource) so the test seam can back it with H2.
+    // The production constructor assigns a Hikari pool.
     private final DataSource ds;
     private final boolean debugParams;
-    private final Logger log;
 
     // True while THIS instance is running a tx()/batch() body on the current thread. Per-instance
     // (not static) so a plugin holding two Databases can safely wrap one's tx around the other's
@@ -49,7 +50,16 @@ public final class Database implements AutoCloseable {
     private final ThreadLocal<Boolean> inTx = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     public Database(DatabaseConfig cfg, Logger log) {
-        this.log = log;
+        this(cfg, log, null);
+    }
+
+    /**
+     * As {@link #Database(DatabaseConfig, Logger)}, plus an optional escape hatch to set any
+     * HikariConfig property the library does not model. The {@code customizer} runs FIRST; the
+     * library then re-asserts its security-critical settings (jdbcUrl/sslMode, driver class, the
+     * blast-radius flags, and the truststore) so hardening cannot be silently weakened.
+     */
+    public Database(DatabaseConfig cfg, Logger log, Consumer<HikariConfig> customizer) {
         this.debugParams = cfg.debugParams();
 
         if (cfg.host() == null || !SAFE_DB_HOST.matcher(cfg.host()).matches()) {
@@ -62,6 +72,13 @@ public final class Database implements AutoCloseable {
         if (cfg.database() == null || !SAFE_DB_NAME.matcher(cfg.database()).matches()) {
             throw new IllegalArgumentException("Invalid database name '" + cfg.database()
                 + "' — must be [A-Za-z0-9_]+; no JDBC URL parameter chars allowed.");
+        }
+        if (cfg.trustStoreUrl() != null && !cfg.trustStoreUrl().isBlank()) {
+            String tsLower = cfg.trustStoreUrl().trim().toLowerCase(java.util.Locale.ROOT);
+            if (tsLower.startsWith("http:") || tsLower.startsWith("https:")) {
+                throw new IllegalArgumentException("Refusing http(s) trustStoreUrl '" + cfg.trustStoreUrl()
+                    + "': a remotely fetched truststore enables MITM. Use a local file: URL.");
+            }
         }
 
         boolean loopback = "localhost".equalsIgnoreCase(cfg.host())
@@ -87,20 +104,12 @@ public final class Database implements AutoCloseable {
             case VERIFY_CA -> "sslMode=VERIFY_CA";
             case VERIFY_IDENTITY -> "sslMode=VERIFY_IDENTITY";
         };
+        // useAffectedRows=false (driver default, pinned): callers relying on the MySQL
+        // "INSERT...ON DUPLICATE KEY UPDATE returns 1 for insert / 2 for update" convention
+        // (e.g. MineAuth's brute-force counter) need this.
+        String jdbcUrl = "jdbc:mysql://" + cfg.host() + ":" + cfg.port() + "/" + cfg.database()
+            + "?" + sslParam + "&serverTimezone=UTC&useUnicode=true&characterEncoding=utf8&useAffectedRows=false";
 
-        HikariConfig hc = new HikariConfig();
-        // useAffectedRows=false (driver default, pinned): callers relying on the
-        // MySQL "INSERT...ON DUPLICATE KEY UPDATE returns 1 for insert / 2 for
-        // update" convention (e.g. MineAuth's brute-force counter) need this.
-        hc.setJdbcUrl("jdbc:mysql://" + cfg.host() + ":" + cfg.port() + "/" + cfg.database()
-            + "?" + sslParam + "&serverTimezone=UTC&useUnicode=true&characterEncoding=utf8&useAffectedRows=false");
-        // Explicit driver class: Velocity/Paper classloader isolation breaks the
-        // DriverManager ServiceLoader path; setting it makes Hikari load the driver
-        // from the plugin's shaded classloader directly.
-        hc.setDriverClassName("com.mysql.cj.jdbc.Driver");
-        hc.setUsername(cfg.username());
-        hc.setPassword(cfg.password());
-        hc.setMaximumPoolSize(cfg.poolSize());
         // Unique-per-database pool name by default so logs/JMX distinguish each plugin's pool;
         // an explicit cfg.poolName() overrides it (validated JMX-safe).
         String poolName;
@@ -113,27 +122,40 @@ public final class Database implements AutoCloseable {
         } else {
             poolName = "MineSide-DB-" + cfg.database();
         }
+
+        HikariConfig hc = new HikariConfig();
+        // --- non-critical settings: the customizer may freely override these ---
+        hc.setUsername(cfg.username());
+        hc.setPassword(cfg.password());
+        hc.setMaximumPoolSize(cfg.poolSize());
         hc.setPoolName(poolName);
         if (cfg.connectionTimeoutMs() > 0) hc.setConnectionTimeout(cfg.connectionTimeoutMs());
         if (cfg.idleTimeoutMs() > 0) hc.setIdleTimeout(cfg.idleTimeoutMs());
         if (cfg.maxLifetimeMs() > 0) hc.setMaxLifetime(cfg.maxLifetimeMs());
-        // Lazy pool: don't open a connection in the constructor. Real connection
-        // failures surface on first getConnection(), and unit tests can construct
-        // a Database without a live DB.
+        // Lazy pool: don't open a connection in the constructor — failures surface on first
+        // getConnection(), and unit tests can construct a Database without a live DB.
         hc.setInitializationFailTimeout(-1);
-        // MySQL drops idle connections after wait_timeout; keepalive avoids handing
-        // out dead ones after a quiet period. No connectionTestQuery: let Hikari use
-        // the JDBC4 Connection.isValid() path (Connector/J 8.3 supports it).
+        // MySQL drops idle connections after wait_timeout; keepalive avoids handing out dead ones.
+        // No connectionTestQuery: let Hikari use JDBC4 Connection.isValid() (Connector/J 8.3).
         hc.setKeepaliveTime(60_000);
         // Warn (stack trace) if a connection is held > 60s — diagnostic only, no eviction.
         hc.setLeakDetectionThreshold(60_000);
         hc.addDataSourceProperty("cachePrepStmts", "true");
         hc.addDataSourceProperty("prepStmtCacheSize", "250");
         hc.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
-        // Pin Connector/J blast-radius flags OFF. Safe on 8.3 defaults today, but this lib
-        // is shaded into every plugin — explicit pins are immune to a future driver-default flip.
-        // autoDeserialize (Java-object deser RCE via BLOB) was removed in Connector/J 8.x, so
-        // this is a no-op there; kept as a defensive pin for consumers that shade an older driver.
+
+        // --- escape hatch: any Hikari/driver setting the library does not model ---
+        if (customizer != null) customizer.accept(hc);
+
+        // --- security-critical settings LAST so the customizer cannot weaken them ---
+        // Explicit driver class: Velocity/Paper classloader isolation breaks the DriverManager
+        // ServiceLoader path; setting it loads the driver from the plugin's shaded classloader.
+        hc.setJdbcUrl(jdbcUrl);
+        hc.setDriverClassName("com.mysql.cj.jdbc.Driver");
+        // Pin Connector/J blast-radius flags OFF. Safe on 8.3 defaults today, but this lib is
+        // shaded into every plugin — explicit pins are immune to a future driver-default flip.
+        // autoDeserialize (Java-object deser RCE via BLOB) was removed in Connector/J 8.x, so it
+        // is a no-op there; kept as a defensive pin for consumers that shade an older driver.
         hc.addDataSourceProperty("autoDeserialize", "false");
         hc.addDataSourceProperty("allowLoadLocalInfile", "false");   // LOCAL INFILE file-read by a rogue server
         hc.addDataSourceProperty("allowUrlInLocalInfile", "false");
@@ -142,11 +164,6 @@ public final class Database implements AutoCloseable {
         // Set as dataSource properties (NOT in the URL string) so the path/password never enter
         // the concatenated JDBC URL.
         if (cfg.trustStoreUrl() != null && !cfg.trustStoreUrl().isBlank()) {
-            String tsLower = cfg.trustStoreUrl().trim().toLowerCase(java.util.Locale.ROOT);
-            if (tsLower.startsWith("http:") || tsLower.startsWith("https:")) {
-                throw new IllegalArgumentException("Refusing http(s) trustStoreUrl '" + cfg.trustStoreUrl()
-                    + "': a remotely fetched truststore enables MITM. Use a local file: URL.");
-            }
             hc.addDataSourceProperty("trustCertificateKeyStoreUrl", cfg.trustStoreUrl());
             if (cfg.trustStorePassword() != null)
                 hc.addDataSourceProperty("trustCertificateKeyStorePassword", cfg.trustStorePassword());
@@ -158,14 +175,13 @@ public final class Database implements AutoCloseable {
 
     // Package-private seam for integration tests: drive the helpers against an
     // arbitrary DataSource (e.g. H2) without MySQL pool construction/validation.
-    private Database(DataSource ds, boolean debugParams, Logger log) {
+    private Database(DataSource ds, boolean debugParams) {
         this.ds = ds;
         this.debugParams = debugParams;
-        this.log = log;
     }
 
     static Database forTesting(DataSource ds, boolean debugParams) {
-        return new Database(ds, debugParams, LoggerFactory.getLogger("DatabaseAPI-IT"));
+        return new Database(ds, debugParams);
     }
 
     public Connection getConnection() throws SQLException { return ds.getConnection(); }
@@ -316,9 +332,6 @@ public final class Database implements AutoCloseable {
                 + "does not join the transaction, and can self-deadlock at small pool sizes).", null);
         }
     }
-
-    /** Default batch chunk size — keeps SQL shapes stable and stays under driver limits. */
-    private static final int BATCH_CHUNK = 100;
 
     /**
      * Batched INSERT/UPDATE over {@code items}, chunked at {@value #BATCH_CHUNK}.
