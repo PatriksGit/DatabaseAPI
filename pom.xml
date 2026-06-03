@@ -6,7 +6,7 @@
 
     <groupId>hu.mineside</groupId>
     <artifactId>DatabaseAPI</artifactId>
-    <version>2.0.0</version>
+    <version>2.0.1</version>
     <packaging>jar</packaging>
 
     <name>DatabaseAPI</name>
@@ -68,6 +68,15 @@
 
     <build>
         <plugins>
+            <!-- Pin a modern compiler plugin: JitPack's default Maven binds an ancient
+                 maven-compiler-plugin (3.1) that ignores <maven.compiler.release>, falling
+                 back to source/target 5 and failing on Java 17 sources. 3.13.0 honors
+                 <release>. Mirrors the working ConfigAPI/TextUtilAPI setup. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
